@@ -1,0 +1,113 @@
+#!/bin/bash
+# VitalPBX Installation Script for YunoHost
+# WARNING: READ THE DISCLAIMER
+
+# Source YunoHost helper functions
+source /usr/share/yunohost/helpers
+
+# Define variables from the installer
+domain=$YNH_APP_ARG_DOMAIN
+path_url=$YNH_APP_ARG_PATH
+app=$YNH_APP_INSTANCE_NAME
+
+# Log everything for debugging
+exec > >(tee /var/log/$app/install.log) 2>&1
+set -e # Exit on any error
+
+# Create the application directory
+final_path=/var/www/$app
+mkdir -p "$final_path"
+mkdir -p /var/log/$app
+
+echo "Starting VitalPBX installation on domain: $domain, path: $path_url"
+
+# --- PHASE 1: Stop YunoHost Services to Avoid Conflicts ---
+ynh_print_info "Stopping YunoHost services temporarily..."
+yunohost service stop nginx
+yunohost service stop postfix
+yunohost service stop metronome
+systemctl stop nginx postfix metronome mariadb || true
+
+# --- PHASE 2: System Preparation and VitalPBX Repo Setup ---
+ynh_print_info "Preparing system and adding VitalPBX repository..."
+
+# Install basic prerequisites
+apt-get update
+apt-get install -y curl wget sudo gnupg
+
+# Add the VitalPBX repository key and source
+curl -s http://repo.vitalpbx.org/vitalpbx-repo-gpg-key | apt-key add -
+echo "deb http://repo.vitalpbx.org/vitalpbx/vitalpbx-4-os/ubuntu focal main" > /etc/apt/sources.list.d/vitalpbx.list
+
+# Update with new repo
+apt-get update
+
+# --- PHASE 3: Install VitalPBX ---
+ynh_print_info "Installing VitalPBX. This will take a long time..."
+# Force non-interactive mode to avoid prompts
+export DEBIAN_FRONTEND=noninteractive
+# Use 'yes' to accept any prompts from the vitalpbx package
+yes | apt-get install vitalpbx
+
+ynh_print_info "VitalPBX base installation complete."
+
+# --- PHASE 4: Post-Installation Configuration for YunoHost Coexistence ---
+ynh_print_info "Reconfiguring services to work with YunoHost..."
+
+# Stop and disable Apache (vitalpbx's web server) to let YunoHost's Nginx handle the web
+systemctl stop apache2
+systemctl disable apache2
+
+# Configure Apache to run on localhost port 8081 instead of port 80
+sed -i 's/Listen 80/Listen 127.0.0.1:8081/' /etc/apache2/ports.conf
+# Change the virtual host to also use port 8081
+sed -i 's/<VirtualHost \*:80>/<VirtualHost 127.0.0.1:8081>/' /etc/apache2/sites-enabled/000-default.conf || true
+sed -i 's/<VirtualHost \*:80>/<VirtualHost 127.0.0.1:8081>/' /etc/apache2/sites-enabled/vitalpbx.conf || true
+
+# Start Apache again on the new port
+systemctl start apache2
+
+# --- PHASE 4.5: Set correct permissions for the removal script ---
+ynh_print_info "Setting script permissions..."
+chmod +x "$YNH_APP_BASEDIR/scripts/remove"
+# --- PHASE 5: Integrate with YunoHost's Nginx ---
+ynh_print_info "Configuring Nginx proxy..."
+
+# Create a dedicated Nginx configuration file for this app
+ynh_add_nginx_config
+
+# The ynh_add_nginx_config function creates a conf file. We need to overwrite it with our proxy settings.
+# The file path will be /etc/nginx/conf.d/$domain.d/$app.conf
+nginx_conf_file="/etc/nginx/conf.d/$domain.d/$app.conf"
+
+# Write the proxy configuration to the Nginx file
+cat > "$nginx_conf_file" << EOF
+# VitalPBX Proxy Configuration
+location / {
+    proxy_pass http://127.0.0.1:8081;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_buffering off;
+    client_max_body_size 0;
+}
+EOF
+
+# --- PHASE 6: Restart Services and Finalize ---
+ynh_print_info "Restarting services..."
+
+# Re-enable and start YunoHost services
+yunohost service start nginx
+yunohost service start postfix
+systemctl start mariadb
+
+# Reload Nginx to apply the new proxy configuration
+nginx -t && systemctl reload nginx
+
+ynh_print_info "VitalPBX installation completed successfully."
+echo "You can access it at: https://$domain$path_url"
+echo "Default credentials are usually admin / admin123"
+echo "WARNING: You MUST configure your firewall for SIP/RTP ports!"

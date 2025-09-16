@@ -1,0 +1,29 @@
+#!/bin/bash
+# Removal script for VitalPBX
+
+source /usr/share/yunohost/helpers
+
+app=$YNH_APP_INSTANCE_NAME
+
+exec > >(tee /var/log/$app/remove.log) 2>&1
+set -e
+
+ynh_print_info "Stopping and removing VitalPBX..."
+
+# Stop and purge VitalPBX and its dependencies
+apt-get remove -y --purge vitalpbx asterisk*
+apt-get autoremove -y
+
+# Remove the VitalPBX repository
+rm -f /etc/apt/sources.list.d/vitalpbx.list
+apt-get update
+
+# Remove the application directory and logs
+rm -rf /var/www/$app
+rm -rf /var/log/$app
+
+# Remove the Nginx configuration
+ynh_remove_nginx_config
+
+ynh_print_info "VitalPBX was completely removed."
+# Note: We do not attempt to restart YunoHost services here, as they were already running.

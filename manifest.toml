@@ -1,0 +1,31 @@
+# manifest.toml for VitalPBX
+id = "vitalpbx"
+name = "VitalPBX"
+description = "VitalPBX is a powerful telephony system based on Asterisk"
+version = "4.0.0"
+
+# Maintainer information
+maintainer = { name = "Your Name", email = "your.email@example.com" }
+
+# This app is very invasive and requires its own domain
+multi_instance = false
+install_type = "private"
+
+# It will be installed on its own domain, not as a sub-path
+url = "https://__DOMAIN____PATH__"
+
+# This app has high system requirements
+requirements = { ram = 2048, disk = 20000 } # 2GB RAM, 20GB Disk
+
+# Arguments to show during installation in the web interface
+[install]
+time = 30
+
+[[install.questions]]
+name = "domain"
+type = "domain"
+
+[[install.questions]]
+name = "path"
+type = "path"
+default = "/"
